@@ -11,7 +11,7 @@ import re
 from scipy.optimize import minimize
 from matplotlib.ticker import MaxNLocator
 import matplotlib.transforms as transforms
-import seaborn as sns
+# import seaborn as sns
 from functools import partial
 import warnings
 from chainconsumer import ChainConsumer
@@ -20,13 +20,18 @@ import treecorr
 import twopoint
 import itertools
 import copy
-import tqdm
+try:
+    import tqdm
+except ImportError:
+    tqdm.tqdm = lambda x, *args, **kwargs: return x
+    tqdm.trange = lambda *args, **kwargs: return range(*args)
 import pickle
-import py_timer
 import contextlib
 import os
 import sys
-sys.path.insert(0, "/home/wagoner47/lss_sys")
+lsssys_path = "/home/wagoner47/lss_sys"
+if lsssys_path not in sys.path:
+    sys.path.insert(0, lsssys_path)
 import lsssys
 from lsssys import config
 
@@ -2134,7 +2139,6 @@ def do_single_analytic_fit(store_path, delta_sys, delta_obs):
             np.save(store_path, analytic_params)
         return analytic_params
 
-@py_timer.detailed_time
 def cf_to_precision_matrix(delta_true, good_mask, theta_edges, pix_seps,
                            theta_max, num_threads, cov_path):
     with update_env(OMP_NUM_THREADS=str(num_threads)):
@@ -2159,7 +2163,6 @@ def cf_to_precision_matrix(delta_true, good_mask, theta_edges, pix_seps,
     inv_cov_mat = np.linalg.inv(cov_mat)
     return inv_cov_mat
 
-@py_timer.detailed_time
 def get_single_inv_covariance(cov_path, analytic_path, delta_sys, delta_obs,
                               good_mask, theta_edges, pix_seps, theta_max,
                               num_threads):
@@ -2170,7 +2173,6 @@ def get_single_inv_covariance(cov_path, analytic_path, delta_sys, delta_obs,
         delta_true, good_mask, theta_edges, pix_seps, theta_max, num_threads,
         cov_path)
 
-@py_timer.detailed_time
 def run_const_cov_fit_once(zbin, fracgood, delta_sys, delta, cov_path,
                            analytic_path, chain_path, pix_seps, theta_edges,
                            theta_max, nsteps, mock_num=None, num_threads=None):
@@ -2196,7 +2198,6 @@ def run_const_cov_fit_once(zbin, fracgood, delta_sys, delta, cov_path,
     lnprob = sampler.lnprobability.copy()
     return chain, lnprob
 
-@py_timer.detailed_time
 def run_const_cov_fit(zbin, params):
     nside = params["common"]["nside_fit"][zbin]
     fgood4096 = lsssys.Mask(
@@ -2388,7 +2389,6 @@ def get_wtheta_unweighted(save_path, nn_config, dcat_file, rcat_file,
         dd.write(pathlib.Path(save_path).as_posix(), rr, dr)
         return dd.calculateXi(rr, dr)[0]
 
-# @py_timer.detailed_time
 def get_wtheta_with_weight(delta_sys, params, dcat, rcat, rr, nn_config,
                            nthreads=0, fname=None, force=False):
     if fname is not None and fname.exists() and not force:
@@ -2402,7 +2402,6 @@ def get_wtheta_with_weight(delta_sys, params, dcat, rcat, rr, nn_config,
         dd.write(pathlib.Path(fname).as_posix(), rr, dr)
     return dd.calculateXi(rr, dr)[0]
 
-# @py_timer.detailed_time
 def run_treecorr_once(zbin, params, delta_sys, rcat, fgood, weights_mask, rr,
                       nthreads=0, mock_num=None):
     plot_root_path = params["common"]["plot_root_path"]
@@ -2518,7 +2517,6 @@ def run_treecorr_once(zbin, params, delta_sys, rcat, fgood, weights_mask, rr,
         wtheta_cov = None
     return wtheta_analytic, wtheta_mean, wtheta_cov, wtheta_err
 
-@py_timer.detailed_time
 def run_treecorr(zbin, params, des_spec, weights_mask, fgood):
     nthreads = params["common"].get("max_nthreads", 0)
     rr = treecorr.NNCorrelation(
@@ -2617,7 +2615,6 @@ def run_treecorr(zbin, params, des_spec, weights_mask, fgood):
     return w_mean, w_cov
 
 #----------------------------------- loops ------------------------------------#
-@py_timer.detailed_time
 def run_fits(params):
     params["common"]["chain_root_path"].mkdir(parents=True, exist_ok=True)
     params["common"]["plot_root_path"].mkdir(parents=True, exist_ok=True)
@@ -2637,7 +2634,6 @@ def run_fits(params):
                 "Unrecognized fit_type: {}".format(
                     params["common"]["fit_type"]))
 
-@py_timer.detailed_time
 def run_corr(params):
     nside = params["corr"]["nside"]
     fgood4096 = lsssys.Mask(
@@ -2693,12 +2689,10 @@ def run_corr(params):
     except FileNotFoundError:
         des_wtheta_spec = None
     for zbin in params["common"]["zbins"]:
-        if params["corr"]["do_treecorr"]:
-            wtheta_tc, cov_tc = run_treecorr(
-                zbin, params, des_wtheta_spec, wmask, fgood)
+        wtheta_tc, cov_tc = run_treecorr(
+            zbin, params, des_wtheta_spec, wmask, fgood)
 
 #------------------------------------ Main ------------------------------------#
-@py_timer.detailed_time
 def main(params):
     """
     Main script function, which calls the other functions. Edit the function
@@ -2712,10 +2706,15 @@ def main(params):
 
 #-------------------------------- Script runner -------------------------------#
 if __name__ == "__main__":
-    plt.style.use(["paper", "seaborn-talk", "colorblind"])
-    plt.rcParams["figure.figsize"] = (10.0, 4.96)
-    # zedges = np.around(np.arange(15, 91, 15) / 100, 2)
-    zedges = np.around([0.15, 0.35, 0.5, 0.65, 0.8, 0.9], 2)
+    # plt.style.use(["paper", "seaborn-talk", "colorblind"])
+    # plt.rcParams["figure.figsize"] = (10.0, 4.96)
+    des_year = 3
+    if des_year == 1:
+        zedges = np.around(np.arange(15, 91, 15) / 100, 2)
+    elif des_year == 3:
+        zedges = np.around([0.15, 0.35, 0.5, 0.65, 0.8, 0.9], 2)
+    else:
+        raise ValueError(f"Unknown des_year: {des_year}")
     theta_edges = np.logspace(np.log(2.5), np.log(250.0), num=21, base=np.e)
     contamination = [0, len(all_systematics)]
     params = dict()
@@ -2725,17 +2724,14 @@ if __name__ == "__main__":
         "zedges": dict((i, zedges[i-1:i+1]) for i in range(1, zedges.size)),
         "is_mock": True,
         "mock_nums": np.arange(100),
-        "des_root_path": pathlib.Path("/", "spiff", "wagoner47", "des", "y3"),
+        "des_root_path": pathlib.Path(
+            "/", "spiff", "wagoner47", "des", f"y{des_year}"),
         "fracgood_fname": ("y3_gold_2.2.1_RING_joint_redmagic_v0.5.1_wide_"
                            "maglim_v2.2_mask_nside{}.fits.gz"),
         "fit_type": "const_cov",  # "diag", "const_cov"
         "chain_version": 6,
         "dcat_zcol": "ZREDMAGIC",
-        # "dcat_zbin_fname": ("DES_Y1A1_3x2pt_redMaGiC_zerr_CATALOG_z{zlim[0]}-"
-        #                     "{zlim[1]}.fits"),
         "rcat_zcol": "Z",
-        # "rcat_zbin_fname": ("DES_Y1A1_3x2pt_redMaGiC_RANDOMS_z{zlim[0]}-"
-        #                     "{zlim[1]}.fits"),
         "mcat_zbin_fname": "cat_mock_{num}_z{zlim[0]}-{zlim[1]}.fits",
         "nside_fit": dict((i+1, ni) for i, ni in enumerate(
             [128, 128, 128, 128, 128])),
@@ -2750,24 +2746,19 @@ if __name__ == "__main__":
     params["common"]["mock_run"] = (
         f"full_mocks_v{params['common']['chain_version']}")
     params["common"]["mock_top_path"] = pathlib.Path(
-    	"/", "spiff", "wagoner47", "mock_runs", "y3", 
+    	"/", "spiff", "wagoner47", "mock_runs", f"y{des_year}", 
     	params["common"]["mock_run"], "lognormal_mock_output", "catalogs")
     params["common"]["sys_root_path"] = (
         params["common"]["des_root_path"].joinpath("systematics"))
     params["common"]["cat_root_path"] = (
         params["common"]["des_root_path"].joinpath("redmagic"))
     results_top_path = pathlib.Path(
-        "/", "spiff", "wagoner47", "finalized_systematics_results_y3", 
+        "/", "spiff", "wagoner47", f"finalized_systematics_results_y{des_year}", 
         f"v{params['common']['chain_version']}_results")
     params["common"]["chain_top_path"] = results_top_path.joinpath(
-        "finalized_systematics_chains_y3")
-        #"finalized_systematics_chains_y1", "full_mocks_v4", 
-        #"contamination_0")
+        f"finalized_systematics_chains_y{des_year}")
     params["common"]["plot_top_path"] = results_top_path.joinpath(
-        "finalized_systematics_plots_y3")
-    #params["common"]["plot_root_path"] = (
-    #    params["common"]["plot_top_path"].joinpath(
-    #        "full_mocks_v4", "contamination_0"))
+        f"finalized_systematics_plots_y{des_year}")
     params["common"]["dcat_path"] = params["common"]["cat_root_path"].joinpath(
         "y3_gold_2.2.1_wide_sofcol_run_redmapper_v0.5.1_combined_hd3_hl2_sample"
         ".fits.gz")
@@ -2779,8 +2770,6 @@ if __name__ == "__main__":
             "eigenbasis" if params["common"]["rotated"] else "unrotated"))
     params["fit"] = {
         "force_do_fits": False,
-        "do_analytic_fits": True,
-        "do_mcmc_fits": False,
         "plot_chains": True,
         "show_chain_plots": True and (
             mpl.get_backend() in mpl.rcsetup.interactive_bk),
@@ -2812,7 +2801,6 @@ if __name__ == "__main__":
         params["common"]["chain_version"])
     params["corr"] = {
         "force_do_corr": False,
-        "do_treecorr": True,
         "delta_elin_max": 0.2,
         "nside": 4096,
         "make_plots": False,
@@ -2886,10 +2874,7 @@ if __name__ == "__main__":
                 "" if params["common"]["fit_type"] == "diag" else "_{}".format(
                     params["common"]["fit_type"]), "_mock{num}" if
                 params["common"]["is_mock"] else "", params["corr"]["nside"],
-                params["corr"]["nreal"], params["common"]["chain_version"]),
-        "data_vec_out": params["common"]["des_root_path"].joinpath(
-            "2pt_NG_mcal_1110_linear-weights_treecorr_v{}.fits".format(
-                params["common"]["chain_version"]))
+                params["corr"]["nreal"], params["common"]["chain_version"])
     }
     if params["common"]["is_mock"]:
         for n_cont in np.ravel(np.atleast_1d(contamination)):

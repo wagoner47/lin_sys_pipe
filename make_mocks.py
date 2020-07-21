@@ -8,9 +8,9 @@ import argparse
 import healpix_util as hu
 import copy
 from tqdm.autonotebook import tqdm, trange
-lss_sys_path = pathlib.Path("~/lss_sys").expanduser()
-if lss_sys_path.as_posix() not in sys.path:
-    sys.path.insert(0, lss_sys_path.as_posix())
+lsssys_path = "/home/wagoner47/lss_sys"
+if lsssys_path not in sys.path:
+    sys.path.insert(0, lsssys_path)
 import lsssys
 
 def next_power_of_2(n):
@@ -304,7 +304,6 @@ def generate_random_points(mask, max_ndraw, ra_min=0, ra_max=360, dec_min=-90,
     pix = dmap.hpix.eq2pix(ra, dec)
     ra = ra[~mask.mask[pix]]
     dec = dec[~mask.mask[pix]]
-    # print(np.any(mask.mask[pix]))
     while ra.size < int(factor * max_ndraw):
         new_ra, new_dec = dmap.genrand(
             10 * int(factor * max_ndraw), ra_range=[ra_min, ra_max],
@@ -437,299 +436,6 @@ def gen_catalog_bin(ngal):
         corners, n_gal)])
     hpix_highres = hu.HealPix("nest", highres_nside)
     return hpix_highres.pix2eq(high_res_pix)
-
-def generate_catalog_from_delta_single_bin(rand_ra, rand_dec, delta, ndraw,
-                                           output_file, **kwargs):
-    """
-    Generate a mock galaxy catalog for a single redshift bin using the
-    overdensity field
-
-    Generates ``ndraw`` random points by sampling from ``rand_ra`` and
-    ``rand_dec`` weighted according to ``delta``
-
-    Keyword arguments in ``**kwargs`` are passed to the
-    :meth:`astropy.table.Table.write` method: it is up to the user to make
-    sure the needed keyword arguments are provided for their file type or for
-    overwriting!
-
-    :param rand_ra: Right ascensions of random points drawn over the footprint.
-        Should not include any points outside the footprint to avoid drawing
-        invalid positions
-    :type rand_ra: (``Nrand``,) array-like of ``float``
-    :param rand_dec: Declinations of random points drawn over the footprint.
-        Should not include any points outside the footprint to avoid drawing
-        invalid positions
-    :type rand_dec: (``Nrand``,) array-like of ``float``
-    :param delta: The overdensity field for which we are drawing mock galaxies
-    :type delta: :class:`lsssys.Map`
-    :param ndraw: The number of mock galaxies to be drawn. Should probably be
-        less than ``Nrand``, but this is not checked
-    :type ndraw: ``int``
-    :param output_file: The file in which to save the resulting mock catalog
-    :type output_file: ``str`` or :class:`os.PathLike`
-    """
-    delta_ = np.asanyarray(delta.data)
-    rra = np.asanyarray(rand_ra)
-    rdec = np.asanyarray(rand_dec)
-    rand_pix = hp.ang2pix(hp.npix2nside(delta_.size), rra, rdec, lonlat=True)
-    # print(np.any(delta.mask[rand_pix]))
-    # print(
-    #     delta_[~delta.mask].min(), delta_[~delta.mask].max(), delta_.min(),
-    #     delta_.max())
-    # print(delta_[rand_pix].min(), delta_[rand_pix].max())
-    # print(np.all(np.isfinite(delta_[rand_pix])))
-    # print(np.sum(1. + delta_[rand_pix]))
-    weights = 1. + delta_[rand_pix]
-    normed_weights = weights / weights.sum()
-    mock_indices = np.random.choice(
-        rra.size, ndraw, replace=False, p=normed_weights)
-    mock = Table([rra[mock_indices], rdec[mock_indices]], names=("RA", "DEC"))
-    mock.write(output_file, **kwargs)
-
-def generate_catalog_single_bin(rand_ra, rand_dec, ngal_field, output_file,
-                                **kwargs):
-    """
-    Generate a mock galaxy catalog for a single redshift bin using the
-    galaxy count field field
-
-    Generates a catalog by drawing a number of points from ``rand_ra`` and
-    ``rand_dec`` on each pixel as prescribed by ``ngal_field``
-
-    Keyword arguments in ``**kwargs`` are passed to the
-    :meth:`astropy.table.Table.write` method: it is up to the user to make
-    sure the needed keyword arguments are provided for their file type or for
-    overwriting!
-
-    :param rand_ra: Right ascensions of random points drawn over the footprint.
-        Should not include any points outside the footprint to avoid drawing
-        invalid positions
-    :type rand_ra: (``Nrand``,) array-like of ``float``
-    :param rand_dec: Declinations of random points drawn over the footprint.
-        Should not include any points outside the footprint to avoid drawing
-        invalid positions
-    :type rand_dec: (``Nrand``,) array-like of ``float``
-    :param ngal_field: The map of counts of galaxies on pixels to tell us how
-        many points to place on each pixel
-    :type ngal_field: :class:`lsssys.Map`
-    :param output_file: The file in which to save the resulting mock catalog
-    :type output_file: ``str`` or :class:`os.PathLike`
-    """
-    rpos = Table(np.random.permutation(
-        Table([rand_ra.flatten(), rand_dec.flatten()], names=["RA", "DEC"])), 
-        copy=False)
-    rpos = rpos.group_by(
-        hp.ang2pix(ngal_field.nside, rpos["RA"], rpos["DEC"], lonlat=True))
-    ngal = np.clip(ngal_field.data, 0, None).astype(int)
-    non_empty_pixels = (ngal > 0)
-    assert (np.count_nonzero(non_empty_pixels[rpos.groups.keys]) == 
-            np.count_nonzero(non_empty_pixels)), ("One or more non-empty pixels"
-                                                  " has no random points")
-    assert np.all(rpos["RA"].groups.aggregate(len) >= 
-                  ngal[rpos.groups.keys]), ("One or more non-empty pixels does"
-                                            " not have enough random points")
-    ngal = ngal[non_empty_pixels]
-    rpos = rpos.groups[non_empty_pixels[rpos.groups.keys]]
-    ngal_cumsum = np.cumsum(ngal)
-    assert np.all(np.diff(ngal_cumsum) > 0), \
-        "Still have empty pixels after masking"
-    mock = Table(data=np.zeros(ngal.sum(), dtype=rpos.dtype))
-    for i, (ni, rgroupi) in enumerate(zip(ngal, rpos.groups)):
-        n_start = ngal_cumsum[i - 1] if i > 0 else 0
-        n_end = ngal_cumsum[i]
-        try:
-            mock[n_start:n_end] = rgroupi[:ni]
-        except ValueError:
-            print("Issue for the following")
-            print(f"Group {i} of {ngal.size}")
-            print(f"{n_start}:{n_end}")
-            print(ni)
-            raise
-    mock = Table(np.random.permutation(mock), copy=False)
-    mock.write(output_file, **kwargs)
-
-def generate_catalogs_from_delta(rand_ra, rand_dec, mock, ngal_tot_bins,
-                                 cat_out_dir, mock_num, zedges):
-    """
-    Generate and save mock galaxy catalogs in each redshift bin, using the
-    overdensity field
-
-    :param rand_ra: Right ascensions of random points drawn over the footprint.
-        Should not include any points outside the footprint to avoid drawing
-        invalid positions
-    :type rand_ra: (``Nrand``,) array-like of ``float``
-    :param rand_dec: Declinations of random points drawn over the footprint.
-        Should not include any points outside the footprint to avoid drawing
-        invalid positions
-    :type rand_dec: (``Nrand``,) array-like of ``float``
-    :param mock: The mock map object containing the density maps for the mocks
-        in the redshift bin(s)
-    :type mock: :class:`lsssys.Mock`
-    :param ngal_tot_bins: The number of galaxies to be drawn in the redshift
-        bin(s)
-    :type ngal_tot_bins: ``int`` or (``Nbins``,) array-like of ``int``
-    :param cat_out_dir: The directory in which to store the mock catalogs that
-        are generated
-    :type cat_out_dir: ``str`` or :class:`os.PathLike`
-    :param mock_num: The number of the current mock, for file naming
-    :type mock_num: ``int``
-    :param zedges: The edges of the redshift bin(s), for file naming
-    :type zedges: (``Nbins+1``,) or (``Nbins``, 2) array-like of ``float``
-    """
-    # print("Mock number (begin generate_catalogs):", mock_num, flush=True)
-    save_dir = pathlib.Path(cat_out_dir).expanduser().resolve()
-    if mock.delta.size == 1:
-        # print("Single redshift bin", flush=True)
-        if hasattr(ngal_tot_bins, "__len__"):
-            if np.size(ngal_tot_bins) > 1:
-                raise ValueError("Too many total number of galaxies for mock")
-            ngal_tot_bins = np.asarray(ngal_tot_bins).item()
-        if np.ndim(zedges) > 1:
-            if np.shape(zedges)[0] > 1:
-                raise ValueError("Too many redshift bin edges for mock")
-            fout = save_dir.joinpath(
-                "cat_mock_{num}_z{zlim[0]}-{zlim[1]}.fits".format(
-                    num=mock_num, zlim=zedges[0]))
-        elif np.ndim(zedges) == 0 or np.ndim(zedges) > 2:
-            raise ValueError(
-                "Invalid dimensions for zedges: {}".format(np.ndim(zedges)))
-        else:
-            if len(zedges) > 2:
-                raise ValueError("Too many redshift bin edges for mock")
-            fout = save_dir.joinpath(
-                "cat_mock_{num}_z{zlim[0]}-{zlim[1]}.fits".format(
-                    num=mock_num, zlim=zedges))
-        # print("Mock number:", mock_num, flush=True)
-        # print("Catalog file name:", fout, flush=True)
-        generate_catalog_from_delta_single_bin(
-            rand_ra, rand_dec, mock.delta[0], ngal_tot_bins, fout,
-            overwrite=True)
-    else:
-        # print(mock.delta.size, "redshift bins", flush=True)
-        if ((hasattr(ngal_tot_bins, "__len__") and len(ngal_tot_bins)
-             != mock.delta.size) or not hasattr(ngal_tot_bins, "__len__")):
-            raise ValueError(
-                "Mismatch between number of galaxies per bin and number of"
-                " mocks")
-        if ((np.ndim(zedges) == 1 and len(zedges) != mock.delta.shape[0] + 1)
-            or (np.ndim(zedges) == 2 and np.shape(zedges)[0]
-                != mock.delta.size)):
-            raise ValueError(
-                "Mismatch between number of redshift bin edges and number of"
-                " mocks")
-        elif np.ndim(zedges) == 0 or np.ndim(zedges) > 2:
-            raise ValueError(
-                "Invalid dimensions for zedges: {}".format(np.ndim(zedges)))
-        else:
-            if np.ndim(zedges) == 1:
-                fout_list = [
-                    save_dir.joinpath(
-                        "cat_mock_{num}_z{zmin}-{zmax}.fits".format(
-                            num=mock_num, zmin=zl, zmax=zu)) for zl, zu in zip(
-                        zedges[:-1], zedges[1:])]
-            else:
-                fout_list = [
-                    save_dir.joinpath(
-                        "cat_mock_{num}_z{zlim[0]}-{zlim[1]}.fits".format(
-                            num=mock_num, zlim=zbin)) for zbin in zedges]
-            # print("Mock number:", mock_num, flush=True)
-            # print("Catalog file names:", fout_list, flush=True)
-        for deltai, ndrawi, fouti in zip(
-              mock.delta, ngal_tot_bins, fout_list):
-            generate_catalog_from_delta_single_bin(
-                rand_ra, rand_dec, deltai, ndrawi, fouti, overwrite=True)
-
-def generate_catalogs(mock, mask, cat_out_dir, mock_num, zedges, ra_min=0,
-                      ra_max=360, dec_min=-90, dec_max=90):
-    """
-    Generate and save mock galaxy catalogs in each redshift bin, using the
-    galaxy count maps
-
-    This also generates the random points from which to draw positions
-    internally, and thus needs to know some extra things for that.
-
-    :param mock: The mock map object containing the density maps for the mocks
-        in the redshift bin(s)
-    :type mock: :class:`lsssys.Mock`
-    :param mask: The pixel coverage mask
-    :type mask: :class:`lsssys.Mask` or :class:`lsssys.HealMask`
-    :param cat_out_dir: The directory in which to store the mock catalogs that
-        are generated
-    :type cat_out_dir: ``str`` or :class:`os.PathLike`
-    :param mock_num: The number of the current mock, for file naming
-    :type mock_num: ``int``
-    :param zedges: The edges of the redshift bin(s), for file naming
-    :type zedges: (``Nbins+1``,) or (``Nbins``, 2) array-like of ``float``
-    :param ra_min: The minimum right ascension (in degrees) in which the data
-        will be, to prevent drawing points far from the region of interest.
-        Default 0.0
-    :type ra_min: ``float``, optional
-    :param ra_max: The maximum right ascension (in degrees) in which the data
-        will be, to prevent drawing points far from the region of interest.
-        Default 360.0
-    :type ra_max: ``float``, optional
-    :param dec_min: The minimum declination (in degrees) in which the data
-        will be, to prevent drawing points far from the region of interest.
-        Default -90.0
-    :type dec_min: ``float``, optional
-    :param dec_max: The maximum declination (in degrees) in which the data
-        will be, to prevent drawing points far from the region of interest.
-        Default 90.0
-    :type dec_max: ``float``, optional
-    """
-    # print("Mock number (begin generate_catalogs):", mock_num, flush=True)
-    save_dir = pathlib.Path(cat_out_dir).expanduser().resolve()
-    ngal_tot = np.array(
-        [ng.data[~mask.mask].astype(int).sum() for ng in mock.ngal])
-    max_ngals = np.array(
-        [ng.data[~mask.mask].astype(int).max() for ng in mock.ngal]).max()
-    if len(mock.ngal) == 1:
-        # print("Single redshift bin", flush=True)
-        if np.ndim(zedges) > 1:
-            if np.shape(zedges)[0] > 1:
-                raise ValueError("Too many redshift bin edges for mock")
-            fout_list = [save_dir.joinpath(
-                "cat_mock_{num}_z{zlim[0]}-{zlim[1]}.fits".format(
-                    num=mock_num, zlim=zedges[0]))]
-        elif np.ndim(zedges) == 0 or np.ndim(zedges) > 2:
-            raise ValueError(
-                "Invalid dimensions for zedges: {}".format(np.ndim(zedges)))
-        else:
-            if len(zedges) > 2:
-                raise ValueError("Too many redshift bin edges for mock")
-            fout_list = [save_dir.joinpath(
-                "cat_mock_{num}_z{zlim[0]}-{zlim[1]}.fits".format(
-                    num=mock_num, zlim=zedges))]
-    else:
-        # print(len(mock.ngal), "redshift bins", flush=True)
-        if ((np.ndim(zedges) == 1 and len(zedges) != len(mock.ngal) + 1)
-            or (np.ndim(zedges) == 2 and np.shape(zedges)[0]
-                != len(mock.ngal))):
-            raise ValueError(
-                "Mismatch between number of redshift bin edges and number of"
-                " mocks")
-        elif np.ndim(zedges) == 0 or np.ndim(zedges) > 2:
-            raise ValueError(
-                "Invalid dimensions for zedges: {}".format(np.ndim(zedges)))
-        else:
-            if np.ndim(zedges) == 1:
-                fout_list = [
-                    save_dir.joinpath(
-                        "cat_mock_{num}_z{zmin}-{zmax}.fits".format(
-                            num=mock_num, zmin=zl, zmax=zu)) for zl, zu in zip(
-                        zedges[:-1], zedges[1:])]
-            else:
-                fout_list = [
-                    save_dir.joinpath(
-                        "cat_mock_{num}_z{zlim[0]}-{zlim[1]}.fits".format(
-                            num=mock_num, zlim=zbin)) for zbin in zedges]
-    rand_ra, rand_dec = generate_randoms(
-        mask, mask.maskpix.size * max_ngals, ra_min, ra_max, dec_min, dec_max, 
-        4)
-    # print("Mock number:", mock_num, flush=True)
-    # print("Catalog file names:", fout_list, flush=True)
-    for ngali, fouti in zip(mock.ngal, fout_list):
-        generate_catalog_single_bin(
-            rand_ra, rand_dec, ngali, fouti, overwrite=True)
         
 def gen_mock_catalogs(mock, cat_out_dir, mock_num, zedges, force):
     """
@@ -756,7 +462,6 @@ def gen_mock_catalogs(mock, cat_out_dir, mock_num, zedges, force):
     """
     save_dir = pathlib.Path(cat_out_dir).expanduser().resolve()
     if len(mock.ngal) == 1:
-        # print("Single redshift bin", flush=True)
         if np.ndim(zedges) > 1:
             if np.shape(zedges)[0] > 1:
                 raise ValueError("Too many redshift bin edges for mock")
@@ -773,7 +478,6 @@ def gen_mock_catalogs(mock, cat_out_dir, mock_num, zedges, force):
                 "cat_mock_{num}_z{zlim[0]}-{zlim[1]}.fits".format(
                     num=mock_num, zlim=zedges))]
     else:
-        # print(len(mock.ngal), "redshift bins", flush=True)
         if ((np.ndim(zedges) == 1 and len(zedges) != len(mock.ngal) + 1)
             or (np.ndim(zedges) == 2 and np.shape(zedges)[0]
                 != len(mock.ngal))):
@@ -954,7 +658,6 @@ def main(cat_path, mask_path, theory_dir, nside, z_bin_edges, out_dir,
         ngal_fill = 0
     output_dir.mkdir(parents=True, exist_ok=True)
     np.save(output_dir.joinpath("mean_ngals.npy"), ngal_mean)
-    # print("Set up theory")
     theory = initialize_theory(theory_dir, lmax, zbins, k0)
     delta_output_dir = output_dir.joinpath("delta_maps")
     delta_output_dir.mkdir(exist_ok=True)
@@ -1002,7 +705,6 @@ def main(cat_path, mask_path, theory_dir, nside, z_bin_edges, out_dir,
         rand_states = np.arange(min_mock, nmocks + min_mock)
     else:
         rand_states = [None] * nmocks
-    # print("Generate mocks")
     for i, r_state in enumerate(tqdm(
             rand_states, desc="Mock", dynamic_ncols=True), min_mock):
         try:
@@ -1085,11 +787,9 @@ def main(cat_path, mask_path, theory_dir, nside, z_bin_edges, out_dir,
                         clobber=True)
                 ngal_tot = np.array([
                     ng.data[~mask.mask].astype(int).sum() for ng in mock.ngal])
-                # print("Generate mock galaxies", flush=True)
                 gen_mock_catalogs(
                     mock, cats_output_dir / f"n_contaminate_{n}", i, zedges, 
                     force)
-        # print(f"Done with mock number {i}", flush=True)
         
 class FlagAction(argparse.Action):
     """
