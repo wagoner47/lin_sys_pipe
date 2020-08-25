@@ -616,7 +616,6 @@ def algebraic_parameter_covariance(delta_sys, delta_obs):
     cov_mat[1:,1:] = sigmag2 * np.linalg.inv(m_matrix(delta_sys))
     return cov_mat
 
-@py_timer.detailed_time
 def fit_systematics(delta_sys, delta_obs, nsteps, nwalkers=None,
                     chain_file=None, **kwargs):
     """
@@ -795,7 +794,6 @@ def corr_func_power_law_with_fit(
     print("Fit finished, return correlation function evaluation", flush=True)
     return corr_func_power_law(theta_eval, res.x, theta_max)
 
-@py_timer.detailed_time
 def fit_constant_covariance(delta_sys, delta_obs, c_inv, nsteps, nwalkers=None,
                             nthreads=None, chain_file=None, **kwargs):
     """
